@@ -3,12 +3,20 @@ import {
   Component,
   ElementRef,
   Input,
+  OnDestroy,
   OnInit,
   ViewChild,
 } from '@angular/core';
 import { Todo } from '../models/todo.model';
 import { FormControl, Validators } from '@angular/forms';
-import { fromEvent } from 'rxjs';
+import {
+  Subscription,
+  debounceTime,
+  filter,
+  fromEvent,
+  merge,
+  tap,
+} from 'rxjs';
 import { Store } from '@ngrx/store';
 import { AppState } from 'src/app/app.reducer';
 import { deleteTodo, editTodo, toggleTodo } from '../todo.actions';
@@ -18,9 +26,13 @@ import { deleteTodo, editTodo, toggleTodo } from '../todo.actions';
   templateUrl: './todo-item.component.html',
   styleUrls: ['./todo-item.component.scss'],
 })
-export class TodoItemComponent implements OnInit {
+export class TodoItemComponent implements OnInit, AfterViewInit, OnDestroy {
+  private readonly ENTER_KEY = 13;
   @Input() todo: Todo;
   @ViewChild('input') input: ElementRef;
+  @ViewChild('label') label: ElementRef;
+
+  events: Subscription[] = [];
 
   checkCompleted: FormControl;
   txtInput: FormControl;
@@ -38,24 +50,42 @@ export class TodoItemComponent implements OnInit {
     });
   }
 
-  edit() {
-    this.editing = true;
-    this.txtInput.setValue(this.todo.text);
-    setTimeout(() => {
-      this.input.nativeElement.select();
-    }, 0);
-  }
+  ngAfterViewInit(): void {
+    const dblClickEvent$ = fromEvent(this.label.nativeElement, 'dblclick')
+      .pipe(
+        tap(() => {
+          this.editing = true;
+          this.txtInput.setValue(this.todo.text);
+        }),
+        debounceTime(0)
+      )
+      .subscribe((_) => {
+        this.input.nativeElement.select();
+      });
 
-  editFinish() {
-    this.editing = false;
-    if (this.txtInput.valid) {
-      this.store.dispatch(
-        editTodo({ id: this.todo.id, text: this.txtInput.value })
-      );
-    }
+    const losingFocus$ = merge(
+      fromEvent(this.input.nativeElement, 'blur'),
+      fromEvent(this.input.nativeElement, 'keydown').pipe(
+        filter((event: any) => event.keyCode === this.ENTER_KEY)
+      )
+    ).subscribe((_) => {
+      this.editing = false;
+      if (this.txtInput.valid) {
+        this.store.dispatch(
+          editTodo({ id: this.todo.id, text: this.txtInput.value })
+        );
+      }
+    });
+
+    this.events.push(dblClickEvent$);
+    this.events.push(losingFocus$);
   }
 
   delete() {
     this.store.dispatch(deleteTodo({ id: this.todo.id }));
+  }
+
+  ngOnDestroy(): void {
+    this.events.forEach((subscription) => subscription.unsubscribe());
   }
 }
